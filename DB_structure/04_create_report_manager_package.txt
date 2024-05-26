@@ -1,0 +1,241 @@
+CREATE OR REPLACE PACKAGE "REPORT_PACKAGE" AS
+
+    PROCEDURE "LOG_START"
+    (
+        in_exec_id IN "RPMR_RX"."EXECUTION_ID"%TYPE
+    );
+
+    PROCEDURE "LOG_END"
+    (
+        in_exec_id IN "RPMR_RX"."EXECUTION_ID"%TYPE,
+        in_err_msg IN VARCHAR2 DEFAULT NULL
+    );
+
+    PROCEDURE "PLAN_NEXT"
+    (
+        in_debug BOOLEAN DEFAULT TRUE,
+        in_exec_id IN "RPMR_RX"."EXECUTION_ID"%TYPE
+    );
+
+    PROCEDURE "PREPARE_DATA"
+    (
+        in_debug IN BOOLEAN DEFAULT TRUE,
+        in_exec_id IN "RPMR_RX"."EXECUTION_ID"%TYPE
+    );
+
+    PROCEDURE "RUN_MANAGER_LOOP"
+    (
+        in_debug BOOLEAN DEFAULT TRUE
+    );
+
+END "REPORT_PACKAGE";
+
+CREATE OR REPLACE PACKAGE BODY "REPORT_PACKAGE" AS
+
+    PROCEDURE "LOG_START"
+    (
+        in_exec_id IN "RPMR_RX"."EXECUTION_ID"%TYPE
+    )
+    IS
+        PRAGMA AUTONOMOUS_TRANSACTION;
+    BEGIN
+        UPDATE "RPMR_RX"
+            SET "EXECUTION_START" = SYSDATE
+            WHERE "EXECUTION_ID" = in_exec_id;
+        COMMIT;
+    END;
+
+    PROCEDURE "LOG_END"
+    (
+        in_exec_id IN "RPMR_RX"."EXECUTION_ID"%TYPE,
+        in_err_msg IN VARCHAR2 DEFAULT NULL
+    )
+    IS
+        PRAGMA AUTONOMOUS_TRANSACTION;
+    BEGIN
+        UPDATE "RPMR_RX"
+            SET "EXECUTION_END" = SYSDATE, "EXECUTION_ERR_MSG" = in_err_msg
+            WHERE "EXECUTION_ID" = in_exec_id;
+        /*IF in_err_msg IS NOT NULL THEN
+            --TODO: report internal errors
+        END IF;*/
+        COMMIT;
+    END;
+
+    PROCEDURE "PLAN_NEXT"
+    (
+        in_debug BOOLEAN DEFAULT TRUE,
+        in_exec_id IN "RPMR_RX"."EXECUTION_ID"%TYPE
+    )
+    IS
+        v_rep_name "RPMR_RDEF"."REPORT_NAME"%TYPE;
+        v_rep_ver "RPMR_RDEF"."REPORT_VERSION"%TYPE;
+        v_plan_function "RPMR_RDEF"."PLAN_FUNCTION"%TYPE;
+
+        v_sql_clob CLOB;
+    BEGIN
+        SELECT RD."REPORT_NAME", RD."PLAN_FUNCTION" INTO v_rep_name, v_plan_function FROM "RPMR_RDEF" RD, "RPMR_RX" RX
+            WHERE RD."REPORT_NAME" = RX."REPORT_NAME" AND RD."REPORT_VERSION" = RX."REPORT_VERSION" AND RX."EXECUTION_ID" = in_exec_id;
+        
+        SELECT MAX(RD."REPORT_VERSION") INTO v_rep_ver FROM "RPMR_RDEF" RD
+        WHERE RD."REPORT_NAME" = v_rep_name;
+
+        IF v_plan_function IS NOT NULL THEN
+            v_sql_clob := 'INSERT INTO "RPMR_RX" ("REPORT_NAME", "REPORT_VERSION", "EXECUTION_START_PL") VALUES (''' || v_rep_name || ''', ' || v_rep_ver || ', ' || v_plan_function || '(' || in_exec_id || '))';
+            dbms_output.put_line(v_sql_clob);
+            IF NOT in_debug THEN
+                EXECUTE IMMEDIATE v_sql_clob;
+            END IF;
+        END IF;
+    END;
+
+    PROCEDURE "PREPARE_DATA"
+    (
+        in_debug IN BOOLEAN DEFAULT TRUE,
+        in_exec_id IN "RPMR_RX"."EXECUTION_ID"%TYPE
+    )
+    IS
+        v_tab CHAR(1 CHAR) := chr(9);
+        v_line_break CHAR(1 CHAR) := chr(10);
+
+        v_rep_name "RPMR_RX"."REPORT_NAME"%TYPE;
+        v_rep_ver "RPMR_RX"."REPORT_VERSION"%TYPE;
+
+        v_src_owner "ALL_OBJECTS"."OWNER"%TYPE;
+        v_src_object "ALL_OBJECTS"."OBJECT_NAME"%TYPE;
+        v_src_obj_name VARCHAR2(256 CHAR);
+
+        v_exp_owner "ALL_OBJECTS"."OWNER"%TYPE;
+        v_exp_object "ALL_OBJECTS"."OBJECT_NAME"%TYPE := 'RPMR_RCLOB';
+        v_exp_obj_name VARCHAR2(256 CHAR);
+
+        v_exp_col_sep "RPMR_RDEF"."DATA_OUTPUT_COL_SEP"%TYPE;
+        v_exp_row_sep "RPMR_RDEF"."DATA_OUTPUT_ROW_SEP"%TYPE;
+        v_exp_hdr VARCHAR2(4000 CHAR);
+        v_exp_sql_exp VARCHAR2(4000 CHAR);
+
+        v_sql_clob CLOB;
+
+    BEGIN
+        
+        IF NOT in_debug THEN
+            LOG_START(in_exec_id);
+        END IF;
+
+        --Pull execution plan with supplied ID
+        SELECT RX."REPORT_NAME", RX."REPORT_VERSION" INTO v_rep_name, v_rep_ver FROM "RPMR_RX" RX
+        WHERE RX."EXECUTION_ID" = in_exec_id;
+
+        --Pull definition which the plan is based on
+        SELECT RD."DATA_SOURCE_OWNER", RD."DATA_SOURCE_OBJECT", RD."DATA_OUTPUT_COL_SEP", RD."DATA_OUTPUT_ROW_SEP" INTO v_src_owner, v_src_object, v_exp_col_sep, v_exp_row_sep FROM "RPMR_RDEF" RD
+        WHERE RD."REPORT_NAME" = v_rep_name AND RD."REPORT_VERSION" = v_rep_ver;
+
+        --Compute full object names
+        IF v_src_object IS NULL THEN
+            v_src_obj_name := 'dual';
+        ELSIF v_src_owner IS NULL THEN
+            v_src_obj_name := '"' || v_src_object || '"';
+        ELSE
+            v_src_obj_name := '"' || v_src_owner || '"."' || v_src_object || '"';
+        END IF;
+
+        IF v_exp_owner IS NULL THEN
+            v_exp_obj_name := '"' || v_exp_object || '"';
+        ELSE
+            v_exp_obj_name := '"' || v_exp_owner || '"."' || v_exp_object || '"';
+        END IF;
+
+        --Compute select bodies for export
+        SELECT 
+            LISTAGG(ATC."COLUMN_NAME", v_exp_col_sep) WITHIN GROUP (ORDER BY ATC."COLUMN_ID" ASC),
+            LISTAGG(CASE ATC."DATA_TYPE"
+                        WHEN 'VARCHAR2' THEN '"' || ATC."COLUMN_NAME" || '"'
+                        WHEN 'CHAR' THEN '"' || ATC."COLUMN_NAME" || '"'
+                        ELSE 'to_char("' || ATC."COLUMN_NAME" || '")'
+                    END, ' || ''' || v_exp_col_sep || ''' || ') WITHIN GROUP (ORDER BY ATC."COLUMN_ID" ASC)
+        INTO
+            v_exp_hdr,
+            v_exp_sql_exp
+        FROM "ALL_TAB_COLUMNS" ATC
+        WHERE (v_src_owner IS NULL OR ATC."OWNER" = v_src_owner) AND ATC."TABLE_NAME" = v_src_object
+        ORDER BY ATC."COLUMN_ID" ASC;
+
+        --Prepare the clob
+        v_sql_clob := 'INSERT INTO ' || v_exp_obj_name || ' ("EXECUTION_ID", "CSV_CLOB")' || v_line_break
+            || v_tab || 'VALUES (' || in_exec_id || ', ''' || v_exp_hdr || v_exp_row_sep || ''')';
+        dbms_output.put_line(NULL);
+        dbms_output.put_line(v_sql_clob);
+        IF NOT in_debug THEN
+            EXECUTE IMMEDIATE v_sql_clob;
+        END IF;
+
+        --Compute CSV rows
+        v_sql_clob := 'DECLARE' || v_line_break
+            || v_tab || 'v_target_clob CLOB;' || v_line_break
+            || 'BEGIN' || v_line_break
+            || v_tab || 'SELECT "CSV_CLOB" INTO v_target_clob FROM ' || v_exp_obj_name || v_line_break
+            || v_tab || v_tab || 'WHERE "EXECUTION_ID" = ' || in_exec_id || v_line_break
+            || v_tab || v_tab || 'FOR UPDATE;' || v_line_break
+            || v_tab || 'DBMS_LOB.OPEN(v_target_clob, DBMS_LOB.LOB_READWRITE);' || v_line_break
+            || v_tab || 'FOR l_row IN (' || v_line_break
+            || v_tab || v_tab || 'SELECT ' || v_exp_sql_exp || ' AS "CONTENT"' || v_line_break
+            || v_tab || v_tab || 'FROM ' || v_src_obj_name || v_line_break
+            || v_tab || ')' || v_line_break
+            || v_tab || 'LOOP' || v_line_break
+            || v_tab || v_tab || 'DBMS_LOB.APPEND(v_target_clob, l_row."CONTENT");' || v_line_break
+            || v_tab || v_tab || 'DBMS_LOB.APPEND(v_target_clob, ''' || v_exp_row_sep || ''');' || v_line_break
+            || v_tab || 'END LOOP;' || v_line_break
+            || v_tab || 'DBMS_LOB.CLOSE(v_target_clob);' || v_line_break
+            || 'END;';
+        dbms_output.put_line(NULL);
+        dbms_output.put_line(v_sql_clob);
+        IF NOT in_debug THEN
+            EXECUTE IMMEDIATE v_sql_clob;
+        END IF;
+
+        IF NOT in_debug THEN
+            LOG_END(in_exec_id);
+            COMMIT;
+        END IF;
+
+        PLAN_NEXT(in_debug, in_exec_id);
+
+        IF NOT in_debug THEN
+            COMMIT;
+        END IF;
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            dbms_output.put_line(SQLERRM);
+            IF NOT in_debug THEN
+                LOG_END(in_exec_id, SQLERRM);
+            END IF;
+            ROLLBACK;
+    END;
+
+    PROCEDURE "RUN_MANAGER_LOOP"
+    (
+        in_debug BOOLEAN DEFAULT TRUE
+    ) IS
+    BEGIN
+        IF in_debug THEN
+            FOR xc IN (
+                SELECT RX."EXECUTION_ID" FROM "RPMR_RDEF" RD, "RPMR_RX" RX
+                    WHERE RD."REPORT_NAME" = RX."REPORT_NAME" AND RD."REPORT_VERSION" = RX."REPORT_VERSION" AND RD."HIDE_FROM_MGR" IS NULL AND RX."EXECUTION_START" IS NULL AND RX."EXECUTION_START_PL" < SYSDATE
+            )
+            LOOP
+                dbms_output.put_line('PREPARE_DATA(TRUE, ' || xc."EXECUTION_ID" || ');');
+                "REPORT_PACKAGE"."PREPARE_DATA"(TRUE, xc."EXECUTION_ID");
+            END LOOP;
+        ELSE
+            FOR xc IN (
+                SELECT RX."EXECUTION_ID" FROM "RPMR_RDEF" RD, "RPMR_RX" RX
+                    WHERE RD."REPORT_NAME" = RX."REPORT_NAME" AND RD."REPORT_VERSION" = RX."REPORT_VERSION" AND RD."HIDE_FROM_MGR" IS NULL AND RX."EXECUTION_START" IS NULL AND RX."EXECUTION_START_PL" < SYSDATE
+            )
+            LOOP
+                "REPORT_PACKAGE"."PREPARE_DATA"(FALSE, xc."EXECUTION_ID");
+            END LOOP;
+        END IF;
+    END;
+
+END REPORT_PACKAGE;
