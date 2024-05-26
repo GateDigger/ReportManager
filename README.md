@@ -29,13 +29,13 @@ is a lightweight program designed to, at regular time intervals, pull data from 
    
 ## Example
 1. [e01_random_data_view](Example_project/e01_random_data_view.txt)
-  - Creates a dummy view to pull data from; this is meant to be the actual data source for reporting
+      - Creates a dummy view to pull data from; this is meant to be the actual data source for reporting
 2. [e02_dummy_plan_function](Example_project/e02_dummy_plan_function.txt)
-  - Creates a function which will cause subsequent executions of the report to be planned 10 minutes into the future
+      - Creates a function which will cause subsequent executions of the report to be planned 10 minutes into the future
 3. [e03_create_report](Example_project/e03_create_report.txt)
-  - Creates a report definition and the first execution of the random data view report
+      - Creates a report definition and the first execution of the random data view report
 4. [e04_run_report](Example_project/e04_run_report.txt)
-  - Runs the report manager loop
+      - Runs the report manager loop
 
 ## Remarks
 - The choice of automation solution is up to the developer, all it has to do is invoke RUN_MANAGER_LOOP at a regular time interval compatible with intervals specified through planning functions.
