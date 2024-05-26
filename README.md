@@ -4,14 +4,14 @@ is a lightweight program designed to, at regular time intervals, pull data from 
 ## Overview of the database structure
 1. [01_create_report_definition](DB_structure/01_create_report_definition.txt)
     - RPMR_RDEF stores data about defined reports
-      - A report is only checked for a new version during execution planning and the highest version is chosen
+      - A report definition is only checked for a new version during execution planning and the highest version is chosen
       - DATA_SOURCE_OWNER defaults to the dataowner of the supplied package if left as NULL
       - PLAN_FUNCTION contains names of functions which return the next execution time based on the previous execution; see example
 2. [02_create_report_execution](DB_structure/02_create_report_execution.txt)
     - RPMR_RX stores data about individual executions of defined reports, past and future
-      - EXECUTION_START_PL is the lower bound for when the execution may start
+      - EXECUTION_START_PL is the lower bound for when an execution may start
 3. [03_create_output_csv_table](DB_structure/03_create_output_csv_table.txt)
-    - RPMR_RCLOB stores clobs associated with report executions
+    - RPMR_RCLOB stores output clobs associated with report executions
 4. [04_create_report_manager_package](DB_structure/04_create_report_manager_package.txt)
     - REPORT_PACKAGE contains the following procedures
       - LOG_START
