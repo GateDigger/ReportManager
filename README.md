@@ -5,7 +5,7 @@ is a lightweight program designed to, at regular time intervals, pull data from 
 1. [01_create_report_definition](DB_structure/01_create_report_definition.txt)
     - RPMR_RDEF stores data about defined reports
       - A report definition is only checked for a new version during execution planning and the highest version is chosen
-      - DATA_SOURCE_OWNER defaults to the dataowner of the supplied package if left as NULL
+      - DATA_SOURCE_OWNER defaults to the owner of the manager package if left as NULL
       - PLAN_FUNCTION contains names of functions which return the next execution time based on the previous execution; see example
 2. [02_create_report_execution](DB_structure/02_create_report_execution.txt)
     - RPMR_RX stores data about individual executions of defined reports, past and future
